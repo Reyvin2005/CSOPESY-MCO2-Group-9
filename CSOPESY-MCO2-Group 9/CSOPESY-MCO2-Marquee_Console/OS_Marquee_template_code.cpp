@@ -92,67 +92,61 @@ void keyboard_handler_thread_func() {
 
 void marquee_logic_thread_func(int display_width) {
     while (is_running) {
-        if (marquee_running) {
+        if (marquee_running.load()) {
             std::string current_text;
             {
                 std::lock_guard<std::mutex> lock(marquee_state_mutex);
                 current_text = marquee_text;
             }
-            
-            if (!current_text.empty()) {
-                int text_length = current_text.length();
+
+            if (!current_text.empty() && display_width > 0) {
+                std::string wrapped_text = current_text + " " + current_text;
+                int wrapped_len = static_cast<int>(wrapped_text.length());
                 int pos = marquee_position.load();
-                
-                std::string display_line;
-                if (text_length <= display_width) {
-                    // Text fits in display, center it or scroll it
-                    if (pos >= display_width + text_length) {
-                        marquee_position = 0;
-                        pos = 0;
-                    }
-                    
-                    if (pos < text_length) {
-                        display_line = std::string(display_width, ' ');
-                        int start_pos = (pos < display_width) ? display_width - pos - 1 : 0;
-                        int chars_to_show = std::min(text_length, display_width - start_pos);
-                        if (start_pos >= 0 && chars_to_show > 0) {
-                            display_line.replace(start_pos, chars_to_show, current_text.substr(0, chars_to_show));
-                        }
+                if (wrapped_len == 0) {
+                    wrapped_text = current_text;
+                    wrapped_len = static_cast<int>(wrapped_text.length());
+                }
+
+                if (pos >= wrapped_len) {
+                    pos = 0;
+                    marquee_position.store(0);
+                }
+
+                std::string visible_text;
+                if (display_width <= wrapped_len) {
+                    int end = pos + display_width;
+                    if (end <= wrapped_len) {
+                        visible_text = wrapped_text.substr(pos, display_width);
                     } else {
-                        int offset = pos - text_length;
-                        if (offset < display_width) {
-                            display_line = std::string(display_width, ' ');
-                            int chars_to_show = std::min(text_length, display_width - offset);
-                            if (chars_to_show > 0) {
-                                display_line.replace(display_width - offset - chars_to_show, chars_to_show, 
-                                                   current_text.substr(text_length - chars_to_show, chars_to_show));
-                            }
-                        } else {
-                            display_line = std::string(display_width, ' ');
-                        }
+                        int first_len = wrapped_len - pos;
+                        visible_text = wrapped_text.substr(pos, first_len);
+                        int remaining = display_width - first_len;
+                        visible_text += wrapped_text.substr(0, remaining);
                     }
                 } else {
-                    // Text is longer than display, scroll it
-                    if (pos >= text_length) {
-                        marquee_position = 0;
-                        pos = 0;
-                    }
-                    display_line = current_text.substr(pos, display_width);
-                    if (display_line.length() < display_width) {
-                        display_line += " " + current_text.substr(0, display_width - display_line.length());
+                    visible_text.reserve(display_width);
+                    int remaining = display_width;
+                    int cursor = pos % wrapped_len;
+                    while (remaining > 0) {
+                        int chunk = std::min(remaining, wrapped_len - cursor);
+                        visible_text += wrapped_text.substr(cursor, chunk);
+                        remaining -= chunk;
+                        cursor = (cursor + chunk) % wrapped_len;
                     }
                 }
-                
+
                 {
                     std::lock_guard<std::mutex> lock(marquee_to_display_mutex);
-                    marquee_display_buffer = Colors::BRIGHT_YELLOW + display_line + Colors::RESET;
+                    marquee_display_buffer = visible_text;
                 }
-                
-                marquee_position++;
+
+                marquee_position.store((pos + 1) % wrapped_len);
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(marquee_speed.load()));
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(marquee_speed.load()));
     }
 }
 
