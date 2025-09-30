@@ -31,22 +31,22 @@ namespace Colors {
     const std::string BOLD = "\033[1m";
 }
 
-// ===== Layout constants (1-based coords) =====
-constexpr int MARQUEE_WIDTH = 41;
-constexpr int MARQUEE_TOP_ROW = 2;  // box top border
-constexpr int MARQUEE_TEXT_ROW = 3;  // inner text row (where scrolling appears)
-constexpr int MARQUEE_BOTTOM_ROW = 4;  // box bottom border
-constexpr int STATUS_ROW = 6;  // status shows here
-constexpr int HELP_ROW = 7;  // help messages show here
-constexpr int PROMPT_ROW = 20; // input prompt locked here
-constexpr int PROMPT_COL = 1;  // column where prompt starts (">> ")
-constexpr int SCREEN_WIDTH = 120;
+// --- Layout constants (1-based coords) ---
+constexpr int MARQUEE_WIDTH = 41;       // inner width of marquee box
+constexpr int MARQUEE_TOP_ROW = 2;      // box top border
+constexpr int MARQUEE_TEXT_ROW = 3;     // inner text row (where scrolling appears)
+constexpr int MARQUEE_BOTTOM_ROW = 4;   // box bottom border
+constexpr int STATUS_ROW = 6;           // status shows here
+constexpr int HELP_ROW = 7;             // help messages show here
+constexpr int PROMPT_ROW = 20;          // input prompt locked here
+constexpr int PROMPT_COL = 1;           // column where prompt starts (">> ")
+constexpr int SCREEN_WIDTH = 120;       // terminal width
 
 // --- Shared state ---
 std::atomic<bool> is_running{ true };
 std::atomic<bool> marquee_running{ false };
 std::string marquee_text = " Welcome to CSOPESY Marquee! ";
-std::atomic<int> marquee_speed{ 200 }; // ms
+std::atomic<int> marquee_speed{ 200 };  // ms
 std::atomic<int> marquee_position{ 0 };
 std::mutex marquee_state_mutex;
 
@@ -65,7 +65,7 @@ void enable_ansi_on_windows() {
 #endif
 }
 
-// 1-based column/row
+// --- 1-based column/row ---
 void gotoxy(int col, int row) {
     std::cout << "\033[" << row << ";" << col << "H";
 }
@@ -114,7 +114,6 @@ void display_static_ui() {
     std::cout << Colors::CYAN << prompt_display << Colors::RESET << std::flush;
 }
 
-
 void update_status_line() {
     save_cursor();
     clear_line(STATUS_ROW);
@@ -128,11 +127,28 @@ void update_status_line() {
         << marquee_speed.load() << "ms" << Colors::RESET << std::flush;
     restore_cursor();
 }
+
 void show_help_line() {
     save_cursor();
-    clear_line(HELP_ROW);
+    // Clear enough lines for multi-line help (e.g., HELP_ROW to HELP_ROW+7)
+    for (int row = HELP_ROW; row <= HELP_ROW + 7; ++row) {
+        clear_line(row);
+    }
+    // Print help starting at HELP_ROW
     gotoxy(1, HELP_ROW);
-    std::cout << Colors::BRIGHT_GREEN << "Help: start_marquee, stop_marquee, set_text, set_speed, exit" << Colors::RESET << std::flush;
+    std::cout << Colors::BOLD << Colors::BRIGHT_CYAN << "Available Commands:" << Colors::RESET << "\n";
+    gotoxy(1, HELP_ROW + 1);
+    std::cout << Colors::BRIGHT_YELLOW << "  help" << Colors::WHITE << " - displays the commands and its description\n";
+    gotoxy(1, HELP_ROW + 2);
+    std::cout << Colors::BRIGHT_YELLOW << "  start_marquee" << Colors::WHITE << " - starts the marquee animation\n";
+    gotoxy(1, HELP_ROW + 3);
+    std::cout << Colors::BRIGHT_YELLOW << "  stop_marquee" << Colors::WHITE << " - stops the marquee animation\n";
+    gotoxy(1, HELP_ROW + 4);
+    std::cout << Colors::BRIGHT_YELLOW << "  set_text" << Colors::WHITE << " - accepts a text input and displays it as a marquee\n";
+    gotoxy(1, HELP_ROW + 5);
+    std::cout << Colors::BRIGHT_YELLOW << "  set_speed" << Colors::WHITE << " - sets the marquee animation refresh in milliseconds\n";
+    gotoxy(1, HELP_ROW + 6);
+    std::cout << Colors::BRIGHT_RED << "  exit" << Colors::WHITE << " - terminates the console\n" << Colors::RESET << std::flush;
     restore_cursor();
 }
 
@@ -183,6 +199,7 @@ void set_marquee_text(const std::string& text) {
     marquee_text = text.empty() ? " " : text;
     marquee_position.store(0);
 }
+
 void set_marquee_speed(int spd) {
     if (spd > 0) marquee_speed.store(spd);
     update_status_line();
@@ -275,10 +292,16 @@ int main() {
         else if (line == "start_marquee") {
             marquee_running = true;
             update_status_line();
+            for (int row = HELP_ROW; row <= HELP_ROW + 7; ++row) clear_line(row);
+            gotoxy(1, HELP_ROW);
+            std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET << std::flush;
         }
         else if (line == "stop_marquee") {
             marquee_running = false;
             update_status_line();
+            for (int row = HELP_ROW; row <= HELP_ROW + 7; ++row) clear_line(row);
+            gotoxy(1, HELP_ROW);
+            std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET << std::flush;
         }
         else if (line == "set_text") {
             state = WAITING_TEXT;
@@ -286,6 +309,9 @@ int main() {
                 std::lock_guard<std::mutex> lock(prompt_mutex);
                 prompt_display = "Enter text for marquee: ";
             }
+            for (int row = HELP_ROW; row <= HELP_ROW + 7; ++row) clear_line(row);
+            gotoxy(1, HELP_ROW);
+            std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET << std::flush;
         }
         else if (line == "set_speed") {
             state = WAITING_SPEED;
@@ -293,6 +319,9 @@ int main() {
                 std::lock_guard<std::mutex> lock(prompt_mutex);
                 prompt_display = "Enter speed in ms: ";
             }
+            for (int row = HELP_ROW; row <= HELP_ROW + 7; ++row) clear_line(row);
+            gotoxy(1, HELP_ROW);
+            std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET << std::flush;
         }
         else if (line == "exit") {
             is_running = false;
