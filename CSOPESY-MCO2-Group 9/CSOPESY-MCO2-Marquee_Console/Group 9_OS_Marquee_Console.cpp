@@ -17,6 +17,8 @@
 #include <iomanip>
 #include <sstream>
 #include <algorithm>
+#include <queue>
+#include <condition_variable>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -71,6 +73,11 @@ std::mutex prompt_mutex;
 std::string prompt_display = ">> ";
 std::atomic<bool> help_visible{ false };
 
+// --- Keyboard Handler ---
+std::queue<std::string> command_queue;
+std::mutex command_queue_mutex;
+std::condition_variable command_queue_cv;
+
 // --- Terminal helpers ---
 void enable_ansi_on_windows() {
 #ifdef _WIN32
@@ -93,7 +100,6 @@ void get_console_size(int& width, int& height) {
         height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
     }
     else {
-        // fallback values
         width = 120;
         height = 30;
     }
@@ -384,6 +390,44 @@ void resize_monitor_thread_func() {
     }
 }
 
+// --- Keyboard Handler ---
+void keyboard_handler_thread_func() {
+    std::string line;
+    while (is_running) {
+        if (!std::getline(std::cin, line)) { // EOF or error
+            is_running = false;
+            command_queue_cv.notify_all();
+            break;
+        }
+
+        // sanitize input
+        auto trim = [](std::string& s) {
+            s.erase(0, s.find_first_not_of(" \t\r\n"));
+            if (!s.empty()) s.erase(s.find_last_not_of(" \t\r\n") + 1);
+            };
+        trim(line);
+
+        if (line.empty()) continue;
+
+        {
+            std::lock_guard<std::mutex> lock(command_queue_mutex);
+            command_queue.push(line);
+        }
+        command_queue_cv.notify_one();
+    }
+}
+
+// --- Helper: redraw prompt and position cursor ---
+void redraw_prompt_and_place_cursor() {
+    std::lock_guard<std::mutex> prompt_lock(prompt_mutex);
+    std::lock_guard<std::mutex> layout_lock(layout_mutex);
+    clear_line(layout.prompt_row + 2, layout.screen_width);
+    gotoxy(layout.prompt_col, layout.prompt_row + 2);
+    std::cout << Colors::CYAN << prompt_display << Colors::RESET << std::flush;
+    int input_col = layout.prompt_col + static_cast<int>(prompt_display.size());
+    gotoxy(input_col, layout.prompt_row + 2);
+}
+
 // --- Main ---
 // Part of: Command Recognition & Command Interpreter
 int main() {
@@ -398,56 +442,31 @@ int main() {
     // start resize monitoring thread
     std::thread resize_thread(resize_monitor_thread_func);
 
+    // --- Keyboard Handler ---
+    std::thread keyboard_thread(keyboard_handler_thread_func);
+
     enum CommandState { NORMAL, WAITING_TEXT, WAITING_SPEED };
     CommandState state = NORMAL;
 
     while (is_running) {
-        // prepare the prompt on PROMPT_ROW and compute where user input should start
-        {
-            std::lock_guard<std::mutex> prompt_lock(prompt_mutex);
-            std::lock_guard<std::mutex> layout_lock(layout_mutex);
-            // clear and print prompt
-            clear_line(layout.prompt_row + 2, layout.screen_width);
-            gotoxy(layout.prompt_col, layout.prompt_row + 2);
-            std::cout << Colors::CYAN << prompt_display << Colors::RESET << std::flush;
-        }
-
-        int input_col;
-        {
-            std::lock_guard<std::mutex> prompt_lock(prompt_mutex);
-            std::lock_guard<std::mutex> layout_lock(layout_mutex);
-            input_col = layout.prompt_col + static_cast<int>(prompt_display.size());
-        }
-
-        // position cursor for input
-        int current_prompt_row;
-        {
-            std::lock_guard<std::mutex> lock(layout_mutex);
-            current_prompt_row = layout.prompt_row + 2;
-        }
-        gotoxy(input_col, current_prompt_row);
-
-        // read a line
         std::string line;
-        if (!std::getline(std::cin, line)) { // EOF or error
-            is_running = false;
-            break;
-        }
-
-        // reposition cursor back to prompt line after getline moves it down
         {
-            std::lock_guard<std::mutex> layout_lock(layout_mutex);
-            gotoxy(layout.prompt_col, layout.prompt_row + 2);
+            std::unique_lock<std::mutex> lock(command_queue_mutex);
+            command_queue_cv.wait(lock, [] {
+                return !command_queue.empty() || !is_running.load();
+                });
+
+            if (!is_running) break;
+
+            line = command_queue.front();
+            command_queue.pop();
         }
 
-        // trim
-        auto trim = [](std::string& s) {
-            s.erase(0, s.find_first_not_of(" \t\r\n"));
-            if (!s.empty()) s.erase(s.find_last_not_of(" \t\r\n") + 1);
-            };
-        trim(line);
-        if (line.empty()) continue;
+        
+        // cursor to the prompt position.
+        redraw_prompt_and_place_cursor();
 
+        // handle WAITING states: these are inputs for multi-step commands
         if (state == WAITING_TEXT) {
             set_marquee_text(line);
             state = NORMAL;
@@ -456,6 +475,9 @@ int main() {
                 prompt_display = ">> ";
             }
             update_status_line();
+
+            // redraw prompt for next input
+            redraw_prompt_and_place_cursor();
             continue;
         }
         if (state == WAITING_SPEED) {
@@ -470,12 +492,17 @@ int main() {
                 prompt_display = ">> ";
             }
             update_status_line();
+
+            // redraw prompt for next input
+            redraw_prompt_and_place_cursor();
             continue;
         }
 
         // normal commands
         if (line == "help") {
             help_visible = true;
+            // ensure prompt is visible and saved for restore
+            redraw_prompt_and_place_cursor();
             show_help_line();
         }
         else if (line == "start_marquee") {
@@ -520,6 +547,9 @@ int main() {
                 std::lock_guard<std::mutex> lock(prompt_mutex);
                 prompt_display = "Enter text for marquee: ";
             }
+            // immediately show updated prompt so user knows to type the text
+            redraw_prompt_and_place_cursor();
+
             {
                 std::lock_guard<std::mutex> layout_lock(layout_mutex);
                 // clear help area
@@ -541,6 +571,9 @@ int main() {
                 std::lock_guard<std::mutex> lock(prompt_mutex);
                 prompt_display = "Enter speed in ms: ";
             }
+            // immediately show updated prompt so user knows to type the speed
+            redraw_prompt_and_place_cursor();
+
             {
                 std::lock_guard<std::mutex> layout_lock(layout_mutex);
                 // clear help area
@@ -567,11 +600,15 @@ int main() {
             std::cout << Colors::RED << "Unknown command: " << line << Colors::RESET << std::flush;
             restore_cursor();
         }
+
+        // redraw prompt for next input (default prompt or state prompt)
+        redraw_prompt_and_place_cursor();
     }
 
     // shutdown
     if (marquee_thread.joinable()) marquee_thread.join();
     if (resize_thread.joinable()) resize_thread.join();
+    if (keyboard_thread.joinable()) keyboard_thread.join();
     clear_screen();
     std::cout << Colors::BRIGHT_RED << "CSOPESY Marquee System shutting down..." << Colors::RESET << "\n";
     std::cout << Colors::BRIGHT_YELLOW << "Thank you for using our system!" << Colors::RESET << "\n";
