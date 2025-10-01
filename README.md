@@ -28,10 +28,14 @@ This project is a multithreaded console-based Marquee Operator written in C++. I
 
 ## Example
 ```
->> start
->> speed 100
->> set Hello, World!
->> stop
+>> set_text
+	(after pressing enter,
+	 type your desired message) Hello, World!
+>> set_speed
+	(after pressing enter,
+	 type your desired speed) 100
+>> start_marquee
+>> stop_marquee
 >> exit
 ```
 
