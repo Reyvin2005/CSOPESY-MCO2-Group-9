@@ -96,7 +96,6 @@ void get_console_size(int& width, int& height) {
         height = 30;
     }
 #else
-    // for Unix-like systems, you could use ioctl with TIOCGWINSZ
     width = 120;
     height = 30;
 #endif
@@ -110,13 +109,13 @@ void update_layout() {
     // adjust ONLY marquee width based on screen width (but keep reasonable limits)
     layout.marquee_width = (std::min)((std::max)(41, layout.screen_width - 20), layout.screen_width - 4);
 
-    // keep ALL elements FIXED - don't change them based on screen size
+    // keep ALL elements FIXED - wag palitan based on screen size
     layout.marquee_top_row = 2;                        // FIXED
     layout.marquee_text_row = 3;                       // FIXED  
     layout.marquee_bottom_row = 4;                     // FIXED
     layout.status_row = 6;                             // FIXED
     layout.help_row = 7;                               // FIXED
-    layout.prompt_row = layout.help_row + 15;          // FIXED (adjusted for developer info)
+    layout.prompt_row = layout.help_row + 15;          // FIXED 
     layout.prompt_col = 1;                             // FIXED
 }
 
