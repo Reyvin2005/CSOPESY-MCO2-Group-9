@@ -391,6 +391,7 @@ void resize_monitor_thread_func() {
 }
 
 // --- Keyboard Handler ---
+// Part of: Command Recognition
 void keyboard_handler_thread_func() {
     std::string line;
     while (is_running) {
