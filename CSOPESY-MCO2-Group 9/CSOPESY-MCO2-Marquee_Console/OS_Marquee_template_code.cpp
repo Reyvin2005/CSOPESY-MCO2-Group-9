@@ -32,15 +32,18 @@ namespace Colors {
 }
 
 // --- Layout constants (1-based coords) ---
-constexpr int MARQUEE_WIDTH = 41;       // inner width of marquee box
-constexpr int MARQUEE_TOP_ROW = 2;      // box top border
-constexpr int MARQUEE_TEXT_ROW = 3;     // inner text row (where scrolling appears)
-constexpr int MARQUEE_BOTTOM_ROW = 4;   // box bottom border
-constexpr int STATUS_ROW = 6;           // status shows here
-constexpr int HELP_ROW = 7;             // help messages show here
-constexpr int PROMPT_ROW = 20;          // input prompt locked here
-constexpr int PROMPT_COL = 1;           // column where prompt starts (">> ")
-constexpr int SCREEN_WIDTH = 120;       // terminal width
+struct ConsoleLayout {
+    int screen_width = 120;       // terminal width
+    int screen_height = 30;       // terminal height
+    int marquee_width = 41;       // inner width of marquee box
+    int marquee_top_row = 2;      // box top border
+    int marquee_text_row = 3;     // inner text row (where scrolling appears)
+    int marquee_bottom_row = 4;   // box bottom border
+    int status_row = 6;           // status shows here
+    int help_row = 7;             // help messages show here
+    int prompt_row = 20;          // input prompt locked here (adjusted for developer info)
+    int prompt_col = 1;           // column where prompt starts (">> ")
+};
 
 // --- Shared state ---
 std::atomic<bool> is_running{ true };
@@ -49,7 +52,9 @@ std::string marquee_text = " Welcome to CSOPESY Marquee! ";
 std::atomic<int> marquee_speed{ 200 };  // ms
 std::atomic<int> marquee_position{ 0 };
 std::mutex marquee_state_mutex;
-
+ConsoleLayout layout;
+std::mutex layout_mutex;
+std::mutex console_mutex;
 std::mutex prompt_mutex;
 std::string prompt_display = ">> ";
 
@@ -65,59 +70,132 @@ void enable_ansi_on_windows() {
 #endif
 }
 
+// Get current console size
+void get_console_size(int& width, int& height) {
+#ifdef _WIN32
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (GetConsoleScreenBufferInfo(hOut, &csbi)) {
+        width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+        height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+    }
+    else {
+        // fallback values
+        width = 120;
+        height = 30;
+    }
+#else
+    // For Unix-like systems, you could use ioctl with TIOCGWINSZ
+    width = 120;
+    height = 30;
+#endif
+}
+
+// Update layout based on current console size
+void update_layout() {
+    std::lock_guard<std::mutex> lock(layout_mutex);
+    get_console_size(layout.screen_width, layout.screen_height);
+
+    // Adjust ONLY marquee width based on screen width (but keep reasonable limits)
+    layout.marquee_width = (std::min)((std::max)(41, layout.screen_width - 20), layout.screen_width - 4);
+
+    // Keep ALL elements FIXED - don't change them based on screen size
+    layout.marquee_top_row = 2;      // FIXED
+    layout.marquee_text_row = 3;     // FIXED  
+    layout.marquee_bottom_row = 4;   // FIXED
+    layout.status_row = 6;           // FIXED
+    layout.help_row = 7;             // FIXED
+    layout.prompt_row = 20;          // FIXED (adjusted for developer info)
+    layout.prompt_col = 1;           // FIXED
+}
+
 // --- 1-based column/row ---
 void gotoxy(int col, int row) {
-    std::cout << "\033[" << row << ";" << col << "H";
+    std::lock_guard<std::mutex> lock(console_mutex);
+    if (row < 1) row = 1;
+    if (col < 1) col = 1;
+    printf("\033[%d;%dH", row, col);
+    fflush(stdout);
 }
+
+void save_cursor() {
+    std::lock_guard<std::mutex> lock(console_mutex);
+    printf("\033[s");
+    fflush(stdout);
+}
+
+void restore_cursor() {
+    std::lock_guard<std::mutex> lock(console_mutex);
+    printf("\033[u");
+    fflush(stdout);
+}
+
 void clear_screen() {
-    std::cout << "\033[2J\033[H" << std::flush;
+    std::lock_guard<std::mutex> lock(console_mutex);
+    printf("\033[2J\033[H");
+    fflush(stdout);
 }
-void clear_line(int row, int width = SCREEN_WIDTH) {
+
+void clear_line(int row, int width = 0) {
+    if (width == 0) {
+        std::lock_guard<std::mutex> lock(layout_mutex);
+        width = layout.screen_width;
+    }
     gotoxy(1, row);
     std::cout << std::string(width, ' ') << std::flush;
 }
 
-inline void save_cursor() { std::cout << "\033[s"; }
-inline void restore_cursor() { std::cout << "\033[u"; }
-
 // --- Draw the static UI once (title, marquee box, initial status/help, prompt) ---
 void display_static_ui() {
+    update_layout(); // updates the layout based on current console size
+    
     clear_screen();
 
     // Title (row 1)
     gotoxy(1, 1);
     std::cout << Colors::BOLD << Colors::BRIGHT_BLUE
-        << "========= CSOPESY Marquee Console ========="
+        << "========= Welcome to CSOPESY Marquee Console ========="
         << Colors::RESET;
 
-    // Marquee box
-    gotoxy(1, MARQUEE_TOP_ROW);
-    std::cout << Colors::MAGENTA << "+" << std::string(MARQUEE_WIDTH, '-') << "+" << Colors::RESET;
-    gotoxy(1, MARQUEE_TEXT_ROW);
-    std::cout << Colors::MAGENTA << "|" << Colors::RESET << std::string(MARQUEE_WIDTH, ' ') << Colors::MAGENTA << "|" << Colors::RESET;
-    gotoxy(1, MARQUEE_BOTTOM_ROW);
-    std::cout << Colors::MAGENTA << "+" << std::string(MARQUEE_WIDTH, '-') << "+" << Colors::RESET;
+    // Developer info (rows 2-5)
+    gotoxy(1, 2);
+    std::cout << Colors::BRIGHT_CYAN << "Group Developer: Alvarez, Ivan Antonio T." << Colors::RESET;
+    gotoxy(1, 3);
+    std::cout << Colors::BRIGHT_CYAN << "                 Barlaan, Bahir Benjamin C." << Colors::RESET;
+    gotoxy(1, 4);
+    std::cout << Colors::BRIGHT_CYAN << "                 Co, Joshua Benedict B." << Colors::RESET;
+    gotoxy(1, 5);
+    std::cout << Colors::BRIGHT_CYAN << "                 Tan, Reyvin Matthew T." << Colors::RESET;
 
-    // Status (row STATUS_ROW)
-    gotoxy(1, STATUS_ROW);
+    // Marquee box 
+    gotoxy(1, layout.marquee_top_row + 5);
+    std::cout << Colors::MAGENTA << "+" << std::string(layout.marquee_width, '-') << "+" << Colors::RESET;
+    gotoxy(1, layout.marquee_text_row + 5);
+    std::cout << Colors::MAGENTA << "|" << Colors::RESET << std::string(layout.marquee_width, ' ') << Colors::MAGENTA << "|" << Colors::RESET;
+    gotoxy(1, layout.marquee_bottom_row + 5);
+    std::cout << Colors::MAGENTA << "+" << std::string(layout.marquee_width, '-') << "+" << Colors::RESET;
+
+	// Status (BUG: displays STOPPED when running on maximized window)
+    gotoxy(1, layout.status_row + 5);
     std::cout << Colors::BRIGHT_WHITE << "Status: " << Colors::RESET
         << Colors::RED << "Stopped" << Colors::RESET
         << Colors::BRIGHT_WHITE << " | Speed: " << Colors::YELLOW
         << marquee_speed.load() << "ms" << Colors::RESET;
 
-    // Help line (row HELP_ROW)
-    gotoxy(1, HELP_ROW);
+    // Help line 
+    gotoxy(1, layout.help_row + 5);
     std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET;
 
-    // Prompt (PROMPT_ROW)
-    gotoxy(PROMPT_COL, PROMPT_ROW);
+    // Prompt 
+    gotoxy(layout.prompt_col, layout.prompt_row);
     std::cout << Colors::CYAN << prompt_display << Colors::RESET << std::flush;
 }
 
 void update_status_line() {
+    std::lock_guard<std::mutex> lock(layout_mutex);
     save_cursor();
-    clear_line(STATUS_ROW);
-    gotoxy(1, STATUS_ROW);
+    clear_line(layout.status_row + 5, layout.screen_width);
+    gotoxy(1, layout.status_row + 5);
     std::cout << Colors::BRIGHT_WHITE << "Status: " << Colors::RESET;
     if (marquee_running.load())
         std::cout << Colors::BRIGHT_GREEN << "Running" << Colors::RESET;
@@ -129,26 +207,33 @@ void update_status_line() {
 }
 
 void show_help_line() {
+    std::lock_guard<std::mutex> lock(layout_mutex);
     save_cursor();
-    // Clear enough lines for multi-line help (e.g., HELP_ROW to HELP_ROW+7)
-    for (int row = HELP_ROW; row <= HELP_ROW + 7; ++row) {
-        clear_line(row);
+    
+    // Clear enough lines for multi-line help (ensure we don't clear the prompt area)
+    int max_help_row = layout.prompt_row - 2; // Leave space before prompt
+    int end_help_row = (std::min)(layout.help_row + 12, max_help_row);
+    for (int row = layout.help_row + 5; row <= end_help_row; ++row) {
+        clear_line(row, layout.screen_width);
     }
-    // Print help starting at HELP_ROW
-    gotoxy(1, HELP_ROW);
-    std::cout << Colors::BOLD << Colors::BRIGHT_CYAN << "Available Commands:" << Colors::RESET << "\n";
-    gotoxy(1, HELP_ROW + 1);
-    std::cout << Colors::BRIGHT_YELLOW << "  help" << Colors::WHITE << " - displays the commands and its description\n";
-    gotoxy(1, HELP_ROW + 2);
-    std::cout << Colors::BRIGHT_YELLOW << "  start_marquee" << Colors::WHITE << " - starts the marquee animation\n";
-    gotoxy(1, HELP_ROW + 3);
-    std::cout << Colors::BRIGHT_YELLOW << "  stop_marquee" << Colors::WHITE << " - stops the marquee animation\n";
-    gotoxy(1, HELP_ROW + 4);
-    std::cout << Colors::BRIGHT_YELLOW << "  set_text" << Colors::WHITE << " - accepts a text input and displays it as a marquee\n";
-    gotoxy(1, HELP_ROW + 5);
-    std::cout << Colors::BRIGHT_YELLOW << "  set_speed" << Colors::WHITE << " - sets the marquee animation refresh in milliseconds\n";
-    gotoxy(1, HELP_ROW + 6);
-    std::cout << Colors::BRIGHT_RED << "  exit" << Colors::WHITE << " - terminates the console\n" << Colors::RESET << std::flush;
+    
+    // Print help starting at adjusted HELP_ROW
+    gotoxy(1, layout.help_row + 5);
+    std::cout << Colors::BOLD << Colors::BRIGHT_CYAN << "Available Commands:" << Colors::RESET;
+    gotoxy(1, layout.help_row + 6);
+    std::cout << Colors::BRIGHT_YELLOW << "  help" << Colors::WHITE << " - displays the commands and its description";
+    gotoxy(1, layout.help_row + 7);
+    std::cout << Colors::BRIGHT_YELLOW << "  start_marquee" << Colors::WHITE << " - starts the marquee animation";
+    gotoxy(1, layout.help_row + 8);
+    std::cout << Colors::BRIGHT_YELLOW << "  stop_marquee" << Colors::WHITE << " - stops the marquee animation";
+    gotoxy(1, layout.help_row + 9);
+    std::cout << Colors::BRIGHT_YELLOW << "  set_text" << Colors::WHITE << " - accepts a text input and displays it as a marquee";
+    gotoxy(1, layout.help_row + 10);
+    std::cout << Colors::BRIGHT_YELLOW << "  set_speed" << Colors::WHITE << " - sets the marquee animation refresh in milliseconds";
+    gotoxy(1, layout.help_row + 11);
+    std::cout << Colors::BRIGHT_RED << "  exit" << Colors::WHITE << " - terminates the console";
+    std::cout << Colors::RESET << std::flush;
+    
     restore_cursor();
 }
 
@@ -157,32 +242,44 @@ void marquee_thread_func(int display_width) {
     while (is_running) {
         if (marquee_running.load()) {
             std::string text_copy;
+            int current_width;
             {
                 std::lock_guard<std::mutex> lock(marquee_state_mutex);
                 text_copy = marquee_text;
             }
+            {
+                std::lock_guard<std::mutex> lock(layout_mutex);
+                current_width = layout.marquee_width; // Use current width
+            }
 
-            if (!text_copy.empty() && display_width > 0) {
-                std::string buffer = text_copy + std::string(display_width, ' ');
+            if (!text_copy.empty() && current_width > 0) {  
+                std::string buffer = text_copy + std::string(current_width, ' ');  
                 int len = static_cast<int>(buffer.size());
                 int pos = marquee_position.load();
                 if (pos >= len) pos = 0;
 
                 std::string visible;
-                if (pos + display_width <= len) {
-                    visible = buffer.substr(pos, display_width);
+                if (pos + current_width <= len) {  
+                    visible = buffer.substr(pos, current_width);  
                 }
                 else {
                     int first = len - pos;
-                    visible = buffer.substr(pos, first) + buffer.substr(0, display_width - first);
+                    visible = buffer.substr(pos, first) + buffer.substr(0, current_width - first);  
                 }
 
-                // print inside the marquee box without disrupting user typing
                 save_cursor();
-                gotoxy(2, MARQUEE_TEXT_ROW); // column 2 inside left border, row MARQUEE_TEXT_ROW
-                std::cout << Colors::WHITE << std::setw(display_width) << std::left << visible << Colors::RESET << std::flush;
-                restore_cursor();
+                {
+                    std::lock_guard<std::mutex> layout_lock(layout_mutex);
+                    gotoxy(2, layout.marquee_text_row + 5); // Adjusted for layout with developer info
+                }
 
+                {
+                    std::lock_guard<std::mutex> lock(console_mutex);
+                    printf("%s%-*s%s", Colors::WHITE.c_str(), current_width, visible.c_str(), Colors::RESET.c_str());
+                    fflush(stdout);
+                }
+
+                restore_cursor();
                 marquee_position.store((pos + 1) % len);
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(marquee_speed.load()));
@@ -205,6 +302,34 @@ void set_marquee_speed(int spd) {
     update_status_line();
 }
 
+// Check if console size changed and redraw if needed
+void check_and_handle_resize() {
+    int current_width, current_height;
+    get_console_size(current_width, current_height);
+
+    bool size_changed = false;
+    {
+        std::lock_guard<std::mutex> lock(layout_mutex);
+        if (current_width != layout.screen_width || current_height != layout.screen_height) {
+            size_changed = true;
+        }
+    }
+
+    if (size_changed) {
+        // Small delay to let resize complete and prevent flicker
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        display_static_ui(); // This will update layout and redraw
+    }
+}
+
+// Background resize monitoring thread
+void resize_monitor_thread_func() {
+    while (is_running) {
+        check_and_handle_resize();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Check every 100ms
+    }
+}
+
 // --- Main ---
 int main() {
     enable_ansi_on_windows();
@@ -213,7 +338,10 @@ int main() {
     display_static_ui();
 
     // start marquee thread
-    std::thread marquee_thread(marquee_thread_func, MARQUEE_WIDTH);
+    std::thread marquee_thread(marquee_thread_func, layout.marquee_width);
+    
+    // start resize monitoring thread
+    std::thread resize_thread(resize_monitor_thread_func);
 
     enum CommandState { NORMAL, WAITING_TEXT, WAITING_SPEED };
     CommandState state = NORMAL;
@@ -221,21 +349,28 @@ int main() {
     while (is_running) {
         // prepare the prompt on PROMPT_ROW and compute where user input should start
         {
-            std::lock_guard<std::mutex> lock(prompt_mutex);
+            std::lock_guard<std::mutex> prompt_lock(prompt_mutex);
+            std::lock_guard<std::mutex> layout_lock(layout_mutex);
             // clear and print prompt
-            clear_line(PROMPT_ROW);
-            gotoxy(PROMPT_COL, PROMPT_ROW);
+            clear_line(layout.prompt_row, layout.screen_width);
+            gotoxy(layout.prompt_col, layout.prompt_row);
             std::cout << Colors::CYAN << prompt_display << Colors::RESET << std::flush;
         }
 
         int input_col;
         {
-            std::lock_guard<std::mutex> lock(prompt_mutex);
-            input_col = PROMPT_COL + static_cast<int>(prompt_display.size());
+            std::lock_guard<std::mutex> prompt_lock(prompt_mutex);
+            std::lock_guard<std::mutex> layout_lock(layout_mutex);
+            input_col = layout.prompt_col + static_cast<int>(prompt_display.size());
         }
 
         // position cursor for input
-        gotoxy(input_col, PROMPT_ROW);
+        int current_prompt_row;
+        {
+            std::lock_guard<std::mutex> lock(layout_mutex);
+            current_prompt_row = layout.prompt_row;
+        }
+        gotoxy(input_col, current_prompt_row);
 
         // read a line
         std::string line;
@@ -244,19 +379,17 @@ int main() {
             break;
         }
 
-        // clear the typed input from prompt row so it doesn't remain visible after Enter
-        clear_line(PROMPT_ROW);
+        // Reposition cursor back to prompt line after getline moves it down
         {
-            std::lock_guard<std::mutex> lock(prompt_mutex);
-            gotoxy(PROMPT_COL, PROMPT_ROW);
-            std::cout << Colors::CYAN << prompt_display << Colors::RESET << std::flush;
+            std::lock_guard<std::mutex> layout_lock(layout_mutex);
+            gotoxy(layout.prompt_col, layout.prompt_row);
         }
 
         // trim
         auto trim = [](std::string& s) {
             s.erase(0, s.find_first_not_of(" \t\r\n"));
             if (!s.empty()) s.erase(s.find_last_not_of(" \t\r\n") + 1);
-            };
+        };
         trim(line);
         if (line.empty()) continue;
 
@@ -292,16 +425,28 @@ int main() {
         else if (line == "start_marquee") {
             marquee_running = true;
             update_status_line();
-            for (int row = HELP_ROW; row <= HELP_ROW + 7; ++row) clear_line(row);
-            gotoxy(1, HELP_ROW);
-            std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET << std::flush;
+            {
+                std::lock_guard<std::mutex> layout_lock(layout_mutex);
+                int max_help_row = layout.prompt_row - 2;
+                int end_help_row = (std::min)(layout.help_row + 12, max_help_row);
+                for (int row = layout.help_row + 5; row <= end_help_row; ++row)
+                    clear_line(row, layout.screen_width);
+                gotoxy(1, layout.help_row + 5);
+                std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET << std::flush;
+            }
         }
         else if (line == "stop_marquee") {
             marquee_running = false;
             update_status_line();
-            for (int row = HELP_ROW; row <= HELP_ROW + 7; ++row) clear_line(row);
-            gotoxy(1, HELP_ROW);
-            std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET << std::flush;
+            {
+                std::lock_guard<std::mutex> layout_lock(layout_mutex);
+                int max_help_row = layout.prompt_row - 2;
+                int end_help_row = (std::min)(layout.help_row + 12, max_help_row);
+                for (int row = layout.help_row + 5; row <= end_help_row; ++row)
+                    clear_line(row, layout.screen_width);
+                gotoxy(1, layout.help_row + 5);
+                std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET << std::flush;
+            }
         }
         else if (line == "set_text") {
             state = WAITING_TEXT;
@@ -309,9 +454,15 @@ int main() {
                 std::lock_guard<std::mutex> lock(prompt_mutex);
                 prompt_display = "Enter text for marquee: ";
             }
-            for (int row = HELP_ROW; row <= HELP_ROW + 7; ++row) clear_line(row);
-            gotoxy(1, HELP_ROW);
-            std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET << std::flush;
+            {
+                std::lock_guard<std::mutex> layout_lock(layout_mutex);
+                int max_help_row = layout.prompt_row - 2;
+                int end_help_row = (std::min)(layout.help_row + 12, max_help_row);
+                for (int row = layout.help_row + 5; row <= end_help_row; ++row)
+                    clear_line(row, layout.screen_width);
+                gotoxy(1, layout.help_row + 5);
+                std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET << std::flush;
+            }
         }
         else if (line == "set_speed") {
             state = WAITING_SPEED;
@@ -319,19 +470,26 @@ int main() {
                 std::lock_guard<std::mutex> lock(prompt_mutex);
                 prompt_display = "Enter speed in ms: ";
             }
-            for (int row = HELP_ROW; row <= HELP_ROW + 7; ++row) clear_line(row);
-            gotoxy(1, HELP_ROW);
-            std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET << std::flush;
+            {
+                std::lock_guard<std::mutex> layout_lock(layout_mutex);
+                int max_help_row = layout.prompt_row - 2;
+                int end_help_row = (std::min)(layout.help_row + 12, max_help_row);
+                for (int row = layout.help_row + 5; row <= end_help_row; ++row)
+                    clear_line(row, layout.screen_width);
+                gotoxy(1, layout.help_row + 5);
+                std::cout << Colors::BRIGHT_GREEN << "Type 'help' for available commands." << Colors::RESET << std::flush;
+            }
         }
         else if (line == "exit") {
             is_running = false;
             break;
         }
         else {
-            //unkown command
+            //unknown command
             save_cursor();
-            clear_line(HELP_ROW);
-            gotoxy(1, HELP_ROW);
+            std::lock_guard<std::mutex> layout_lock(layout_mutex);
+            clear_line(layout.help_row + 5, layout.screen_width);
+            gotoxy(1, layout.help_row + 5);
             std::cout << Colors::RED << "Unknown command: " << line << Colors::RESET << std::flush;
             restore_cursor();
         }
@@ -339,6 +497,7 @@ int main() {
 
     // shutdown
     if (marquee_thread.joinable()) marquee_thread.join();
+    if (resize_thread.joinable()) resize_thread.join();
     clear_screen();
     std::cout << Colors::BRIGHT_RED << "CSOPESY Marquee System shutting down..." << Colors::RESET << "\n";
     std::cout << Colors::BRIGHT_YELLOW << "Thank you for using our system!" << Colors::RESET << "\n";
