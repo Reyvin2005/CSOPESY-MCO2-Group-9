@@ -18,8 +18,5 @@
     <ClCompile Include="Group 9_OS_Marquee_Console.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="OS_Marquee_template_code.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
 </Project>
