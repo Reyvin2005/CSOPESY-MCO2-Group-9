@@ -1,4 +1,5 @@
 /*
+
     Course & Section: CSOPESY | S13
     Assessment: MCO2
     Group 9 Developers: Alvarez, Ivan Antonio T.
@@ -6,7 +7,10 @@
                         Co, Joshua Benedict B.
                         Tan, Reyvin Matthew T.
     Version Date: September 30, 2025
-*/
+
+
+    USE Group 9_OS_Marquee_Console.cpp as the main file.
+
 
 #include <iostream>
 #include <string>
@@ -561,3 +565,5 @@ int main() {
     std::cout << Colors::BRIGHT_YELLOW << "Thank you for using our system!" << Colors::RESET << "\n";
     return 0;
 }
+
+*/
