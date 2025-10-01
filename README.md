@@ -1,4 +1,3 @@
-
 # CSOPESY-MCO2-Group-9
 
 ## Project: CSOPESY Marquee Console
