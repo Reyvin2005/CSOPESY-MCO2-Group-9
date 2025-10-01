@@ -19,10 +19,11 @@ This project is a multithreaded console-based Marquee Operator written in C++. I
 ## Usage
 1. Run the compiled executable (e.g., `OS_Marquee_template_code.exe`)
 2. Use the command prompt at the bottom of the console to enter commands:
-	- `start` : Start the marquee
-	- `stop` : Stop the marquee
-	- `speed <ms>` : Set marquee speed in milliseconds
-	- `set <message>` : Change the marquee message
+	- `help` : SShow list of commands
+    - `start_marquee` : Start the marquee
+	- `stop_marquee` : Stop the marquee
+    - `set_text` : Change the marquee message
+	- `set_speed` : Set marquee speed in milliseconds
 	- `exit` : Quit the program
 
 ## Example
